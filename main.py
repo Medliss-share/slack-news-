@@ -319,9 +319,9 @@ def filter_by_time_range(articles: list[Article], now: datetime, hours_before: i
     
     for article in articles:
         if article.published_at is None:
-            # 公開日時が不明な記事は除外（古い記事の可能性が高い）
-            skipped_no_date += 1
-            logger.debug("Skipping article with no published_at: %s", article.title[:50])
+            # 公開日時が不明な記事は、時間範囲チェックをスキップして含める（新着記事の可能性がある）
+            logger.debug("Article with no published_at (including anyway): %s", article.title[:50])
+            filtered.append(article)
             continue
         
         # タイムゾーンを統一（JSTに変換）
