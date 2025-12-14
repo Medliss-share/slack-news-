@@ -38,9 +38,17 @@ def fetch_medicaltech(timeout: int = 10) -> List[Article]:
         if not link.startswith("http"):
             link = urljoin(url, link)
         
-        # 直後の time datetime を拾う
-        tail = text[m.end() : m.end() + 400]
-        tm = re.search(r'<time[^>]*datetime="([^"]+)"', tail)
+        # time datetime を拾う（h3タグの後、より広い範囲で検索）
+        # articleタグ全体を探す
+        article_start = text.rfind('<article', 0, m.start())
+        if article_start == -1:
+            article_start = m.start()
+        article_end = text.find('</article>', m.end())
+        if article_end == -1:
+            article_end = m.end() + 2000  # フォールバック: 2000文字まで
+        
+        article_section = text[article_start:article_end]
+        tm = re.search(r'<time[^>]*datetime="([^"]+)"', article_section, re.IGNORECASE)
         published = tm.group(1) if tm else None
         
         # 概要（description）を取得（記事ページから取得を試みる）
