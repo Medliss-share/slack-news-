@@ -427,6 +427,8 @@ def run(dry_run: bool = False, storage_path: Path | None = None, max_items: int 
     
     if not fetched:
         logger.warning("すべてのソースから記事を取得できませんでした。")
+    else:
+        logger.info("Total fetched articles: %d", len(fetched))
 
     filtered = filter_articles(
         fetched,
@@ -435,13 +437,16 @@ def run(dry_run: bool = False, storage_path: Path | None = None, max_items: int 
         exclude_keywords=config.EXCLUDE_KEYWORDS,
         exclude_domains=config.EXCLUDE_DOMAINS,
     )
+    logger.info("After keyword filtering: %d articles", len(filtered))
     
     # 日時フィルタリング（指定時間範囲の記事のみを対象）
     now = datetime.now(timezone(timedelta(hours=9)))
-    logger.info("Applying time window: last %d hour(s)", config.TIME_RANGE_HOURS)
+    logger.info("Applying time window: last %d hour(s) (now: %s)", config.TIME_RANGE_HOURS, now.strftime("%Y-%m-%d %H:%M:%S JST"))
     filtered = filter_by_time_range(filtered, now, hours_before=config.TIME_RANGE_HOURS)
+    logger.info("After time range filtering: %d articles", len(filtered))
     
     filtered = deduplicate_articles(filtered)
+    logger.info("After deduplication: %d articles", len(filtered))
     filtered = sort_articles(filtered)
 
     # 手動実行時は送信済みURLのチェックをスキップし、Google Newsを除外
