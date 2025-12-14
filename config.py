@@ -234,8 +234,8 @@ MAX_ARTICLES_PER_POST: int = 5
 # RSS 取得タイムアウト（秒）
 FETCH_TIMEOUT: int = 10
 
-# 取得対象とする時間範囲（時間単位）。デフォルトは直近6時間（定時3回/日の1枠）。
-TIME_RANGE_HOURS: int = int(os.environ.get("TIME_RANGE_HOURS", "6"))
+# 取得対象とする時間範囲（時間単位）。デフォルトは直近24時間（前回実行以降の記事を取得）。
+TIME_RANGE_HOURS: int = int(os.environ.get("TIME_RANGE_HOURS", "24"))
 
 # 配信済みURLの保存先
 DATA_DIR = Path("data")
