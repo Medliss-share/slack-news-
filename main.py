@@ -65,7 +65,7 @@ def build_message(articles: list[Article], now: datetime) -> str:
     if not articles:
         return "🩺🤖 本時間帯の医療×IT新着はありませんでした。"
 
-    header = f"🩺🤖 *医療×ITニュースまとめ*（{now.strftime('%Y-%m-%d %H:%M JST')}）"
+    header = f"ニュースまとめをお届けします！"
     lines = [header, ""]
     
     # ソース別にグループ化
