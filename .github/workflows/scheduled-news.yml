@@ -1,20 +1,28 @@
+# 定時: Channel A（朝・ヘルステック系）と Channel B（夜・一般IT+イベント）
+# launchd（macOS）と同等の引数・EXTRA_SOURCES を想定
 name: 医療×ITニュース自動配信
 
 on:
   schedule:
-    # JST 9時 = UTC 0時（5分に設定して遅延を回避）
-    - cron: '5 0 * * *'
-    # JST 15時 = UTC 6時（5分に設定して遅延を回避）
-    - cron: '5 6 * * *'
-    # JST 21時 = UTC 12時（5分に設定して遅延を回避）
-    - cron: '5 12 * * *'
-  workflow_dispatch: # 手動実行も可能
+    # JST 9:05 ≒ UTC 0:05 — Channel A（競合・ヘルステック技術・会議系）
+    - cron: "5 0 * * *"
+    # JST 21:05 ≒ UTC 12:05 — Channel B（一般IT・connpass）
+    - cron: "5 12 * * *"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "実行チャンネル（a=朝・B=夜・both=両方連続）"
+        type: choice
+        required: true
+        default: "both"
+        options:
+          - a
+          - b
+          - both
 
-# 同時実行を防ぐ（同じ時間に複数回実行されないようにする）
-# すべての実行を同じグループにして、同時実行を完全に防ぐ
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true  # 既に実行中のものはキャンセルして、新しい実行のみを実行
+  cancel-in-progress: true
 
 jobs:
   send-news:
@@ -26,7 +34,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Get previous workflow run ID
         id: previous-run
@@ -35,14 +43,13 @@ jobs:
           WORKFLOW_ID=$(curl -s -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows" | \
             jq -r ".workflows[] | select(.name == \"${{ github.workflow }}\") | .id")
-          
-          # 最新の実行（現在の実行）をスキップして、その前の実行を取得
+
           PREV_RUN_ID=$(curl -s -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?branch=${{ github.ref_name }}&per_page=10&status=completed" | \
             jq -r "[.workflow_runs[] | select(.id != ${{ github.run_id }}) | .id] | first // empty")
-          
+
           if [ -n "$PREV_RUN_ID" ] && [ "$PREV_RUN_ID" != "null" ]; then
-            echo "run-id=$PREV_RUN_ID" >> $GITHUB_OUTPUT
+            echo "run-id=$PREV_RUN_ID" >> "$GITHUB_OUTPUT"
             echo "Found previous run ID: $PREV_RUN_ID"
           else
             echo "No previous run found"
@@ -59,16 +66,55 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.previous-run.outputs.run-id }}
 
-      - name: Run news fetcher
+      - name: Run news fetcher (Channel A / B)
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          EXTRA_SOURCES: ${{ secrets.EXTRA_SOURCES }}
+          SLACK_WEBHOOK_URL_A: ${{ secrets.SLACK_WEBHOOK_URL_A }}
+          SLACK_WEBHOOK_URL_B: ${{ secrets.SLACK_WEBHOOK_URL_B }}
+          PRTIMES_RSS_URLS: ${{ secrets.PRTIMES_RSS_URLS }}
           EXCLUDE_EXTRA_KEYWORDS: ${{ secrets.EXCLUDE_EXTRA_KEYWORDS }}
           EXCLUDE_DOMAINS: ${{ secrets.EXCLUDE_DOMAINS }}
           TIME_RANGE_HOURS: ${{ secrets.TIME_RANGE_HOURS }}
+          HEALTHTECH_COMPANY_EXTRA_ALLOWLIST: ${{ secrets.HEALTHTECH_COMPANY_EXTRA_ALLOWLIST }}
+          HEALTHTECH_PRIORITY_GOOGLE_NEWS_QUERIES: ${{ secrets.HEALTHTECH_PRIORITY_GOOGLE_NEWS_QUERIES }}
+          GENERAL_TECH_PRTIMES_RSS_URLS: ${{ secrets.GENERAL_TECH_PRTIMES_RSS_URLS }}
+          GENERAL_TECH_GOOGLE_NEWS_QUERIES: ${{ secrets.GENERAL_TECH_GOOGLE_NEWS_QUERIES }}
+          GENERAL_TECH_RSS_URLS: ${{ secrets.GENERAL_TECH_RSS_URLS }}
         run: |
+          set -e
           mkdir -p data
-          python3 main.py --verbose
+          EVT="${{ github.event_name }}"
+          SCHED="${{ github.event.schedule }}"
+          INPUT_CH="${{ github.event.inputs.channel }}"
+
+          run_a() {
+            echo "=== Channel A (webhook a) ==="
+            EXTRA_SOURCES="medicaltech,htwatch,googlenews" \
+              python3 main.py --verbose --category competitor,healthtech,conference --webhook a
+          }
+          run_b() {
+            echo "=== Channel B (webhook b) ==="
+            EXTRA_SOURCES="medicaltech,htwatch,connpass" \
+              python3 main.py --verbose --category general_tech,conference --webhook b
+          }
+
+          if [ "$EVT" = "workflow_dispatch" ]; then
+            case "$INPUT_CH" in
+              a) run_a ;;
+              b) run_b ;;
+              both) run_a; run_b ;;
+              *) echo "Unknown channel: $INPUT_CH"; exit 1 ;;
+            esac
+          else
+            case "$SCHED" in
+              "5 0 * * *") run_a ;;
+              "5 12 * * *") run_b ;;
+              *)
+                echo "Unexpected schedule: [$SCHED]"
+                exit 1
+                ;;
+            esac
+          fi
 
       - name: Upload sent URLs for next run
         if: always()
@@ -78,4 +124,3 @@ jobs:
           name: sent-urls
           path: data/sent_urls.json
           retention-days: 90
-

@@ -169,19 +169,24 @@ python3 main.py --dry-run --category conference --manual
 1. **GitHubリポジトリのSecretsに環境変数を設定**
    - リポジトリの Settings → Secrets and variables → Actions に移動
    - 以下のSecretsを追加：
-     - `SLACK_WEBHOOK_URL`: Slack Incoming Webhook の URL（必須）
-     - `EXTRA_SOURCES`: `medicaltech,htwatch,googlenews`（オプション）
-     - `EXCLUDE_EXTRA_KEYWORDS`: 除外キーワード（オプション、カンマ区切り）
-     - `EXCLUDE_DOMAINS`: 除外ドメイン（オプション、カンマ区切り）
-     - `TIME_RANGE_HOURS`: 時間範囲（オプション、デフォルト: 6）
+     - `SLACK_WEBHOOK_URL_A`: Channel A（朝・ヘルステック系）用 Webhook（必須）
+     - `SLACK_WEBHOOK_URL_B`: Channel B（夜・一般IT+イベント）用 Webhook（必須）
+     - `SLACK_WEBHOOK_URL`: 未設定時のフォールバック用（任意。`main.py` の `--webhook default` 用）
+     - `PRTIMES_RSS_URLS`: PR TIMES の RSS URL（任意。未指定時は `config.py` のデフォルト）
+     - `EXCLUDE_EXTRA_KEYWORDS`: 除外キーワード（任意、カンマ区切り）
+     - `EXCLUDE_DOMAINS`: 除外ドメイン（任意、カンマ区切り）
+     - `TIME_RANGE_HOURS`: 取得する過去時間（任意）
+     - その他 `config.py` で参照する任意の Secret（`HEALTHTECH_PRIORITY_GOOGLE_NEWS_QUERIES` 等）は必要に応じて
+
+   **注意:** ワークフロー内で朝用・夜用に `EXTRA_SOURCES` を切り替えているため、リポジトリの `EXTRA_SOURCES` Secret は使いません（設定してもこのジョブでは参照しません）。
 
 2. **ワークフローファイルの確認**
    - `.github/workflows/scheduled-news.yml` が正しくコミットされているか確認
-   - スケジュールは自動的に設定されています（JST 9時、15時、21時）
+   - スケジュール: **JST 9:05 頃**（Channel A）、**JST 21:05 頃**（Channel B）。UTC の `cron` で指定（GitHub は UTC 基準）
 
 3. **動作確認**
    - GitHubリポジトリの Actions タブで実行状況を確認
-   - 手動実行も可能（Actions → ワークフローを選択 → Run workflow）
+   - 手動実行: Actions → 本ワークフロー → Run workflow → `channel` で `a` / `b` / `both` を選択
 
 **メリット:**
 - パソコンが起動していなくても動作
@@ -202,8 +207,8 @@ launchctl load ~/Library/LaunchAgents/com.suisan.slack-news-09.plist
 launchctl load ~/Library/LaunchAgents/com.suisan.slack-news-21.plist
 ```
 
-- `com.suisan.slack-news-09.plist`: 09:00 に `--category competitor --webhook a`
-- `com.suisan.slack-news-21.plist`: 21:00 に `--category tech,conference --webhook b`
+- `com.suisan.slack-news-09.plist`: 09:00 に `--category competitor,healthtech,conference --webhook a`
+- `com.suisan.slack-news-21.plist`: 21:00 に `--category general_tech,conference --webhook b`
 
 **注意:** パソコンが起動していてログインしている場合のみ動作します。スリープ中や電源オフ時は実行されません。
 
