@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable, List
 
+from httpclient import urlopen as _urlopen
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,12 @@ class Article:
     summary: str | None = None
     published_at: datetime | None = None
     matched_keywords: list[str] | None = None  # マッチしたキーワードのリスト
+    categories: list[str] | None = None  # 分類されたカテゴリ（tech/competitor/conference）
+    is_event: bool = False  # connpass 等の開催予定イベント（医療×ITフィルタと time_range をバイパス）
+    event_start_at: datetime | None = None  # 開催日時（イベントの場合）
+    event_location: str | None = None  # 開催場所文字列（表示用）
+    is_general_tech: bool = False  # 一般IT ソース由来の記事（医療×IT フィルタをバイパス）
+    is_healthtech_priority: bool = False  # ヘルステック優先ソース由来（Channel A の医療DXゲートをバイパス）
 
 
 def _fetch_description_from_page(link: str, timeout: int) -> str | None:
@@ -33,11 +41,11 @@ def _fetch_description_from_page(link: str, timeout: int) -> str | None:
             # リダイレクト先のURLを取得
             req = urllib.request.Request(link)
             req.add_header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with _urlopen(link, timeout=timeout, request=req) as response:
                 actual_url = response.geturl()
                 link = actual_url
-        
-        with urllib.request.urlopen(link, timeout=timeout) as response:
+
+        with _urlopen(link, timeout=timeout) as response:
             charset = response.headers.get_content_charset() or "utf-8"
             text = response.read().decode(charset, errors="replace")
         
@@ -88,7 +96,7 @@ def fetch_all_feeds(feed_urls: Iterable[str], timeout: int = 10) -> List[Article
 
 def fetch_feed(feed_url: str, timeout: int = 10) -> List[Article]:
     """単一フィードを取得し、Article のリストに変換する。"""
-    with urllib.request.urlopen(feed_url, timeout=timeout) as response:
+    with _urlopen(feed_url, timeout=timeout) as response:
         content_type = response.headers.get_content_charset() or "utf-8"
         raw = response.read()
         text = raw.decode(content_type, errors="replace")

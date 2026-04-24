@@ -10,7 +10,27 @@ from fetcher import Article, fetch_all_feeds
 from filter import filter_articles
 from notifier import post_message
 from storage import load_sent_urls, save_sent_urls
-from extrasources import fetch_medicaltech, fetch_htwatch, fetch_google_news
+from extrasources import (
+    fetch_medicaltech,
+    fetch_htwatch,
+    fetch_google_news,
+    fetch_connpass,
+    fetch_general_tech_google_news,
+    fetch_general_tech_rss,
+    fetch_healthtech_priority_google_news,
+)
+from categorizer import (
+    ALL_CATEGORIES,
+    CATEGORY_BADGES,
+    CATEGORY_COMPETITOR,
+    CATEGORY_CONFERENCE,
+    CATEGORY_EMOJIS,
+    CATEGORY_GENERAL_TECH,
+    CATEGORY_HEALTHTECH,
+    CATEGORY_LABELS,
+    categorize_articles,
+    normalize_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +59,16 @@ def _get_source_name(link: str) -> str:
         return "医療テックニュース"
     elif "ht-watch.com" in link:
         return "ヘルステックウォッチ"
+    elif "connpass.com" in link:
+        return "connpass"
+    elif "publickey1.jp" in link or "publickey2.jp" in link:
+        return "Publickey"
+    elif "itmedia.co.jp" in link:
+        return "ITmedia"
+    elif "zdnet" in link:
+        return "ZDNet Japan"
+    elif "codezine.jp" in link:
+        return "CodeZine"
     else:
         return "その他"
 
@@ -61,66 +91,191 @@ def _categorize_keywords(keywords: list[str], medical_keywords: list[str], it_ke
     return medical_matched, it_matched
 
 
-def build_message(articles: list[Article], now: datetime) -> str:
-    if not articles:
-        return "🩺🤖 本時間帯の医療×IT新着はありませんでした。"
+def _truncate_summary(summary: str, limit: int = 150) -> str:
+    """概要を limit 文字程度で文の途中を避けつつ切り詰める。"""
+    summary = summary.strip()
+    if len(summary) <= limit:
+        return summary
+    truncated = summary[:limit]
+    for delimiter in ['。', '\n', '.', '！', '？']:
+        last_pos = truncated.rfind(delimiter)
+        if last_pos > int(limit * 0.67):
+            truncated = truncated[:last_pos + 1]
+            break
+    return truncated + "..."
 
-    header = f"ニュースまとめをお届けします！"
-    lines = [header, ""]
-    
+
+_WEEKDAY_JA = ("月", "火", "水", "木", "金", "土", "日")
+
+
+def _format_date_header(now: datetime) -> str:
+    """シンプルな日付ヘッダー: 📅 2026-04-25 (金) 21:00"""
+    wd = _WEEKDAY_JA[now.weekday()]
+    return f"📅 {now.strftime('%Y-%m-%d')} ({wd}) {now.strftime('%H:%M')}"
+
+
+def build_message(
+    articles: list[Article],
+    now: datetime,
+    categories: list[str] | None = None,
+    webhook: str = "default",
+) -> str:
+    """配信用メッセージを組み立てる。
+
+    categories が空または None の場合は "all"（従来互換・ソース別グループ表示）。
+    categories が指定されている場合は、カテゴリ単位のセクションで表示する。
+    webhook は空メッセージ時の文言切り替えに使う。
+    """
+    if not categories:
+        return _build_all_message(articles, now)
+    return _build_category_message(articles, now, categories, webhook=webhook)
+
+
+# webhook 別の「該当なし」文言
+_EMPTY_MESSAGES: dict[str, str] = {
+    "a": "この時間帯のヘルステックニュースはありませんでした。",
+    "b": "この時間帯のITニュースはありませんでした。",
+}
+
+
+def _build_category_message(
+    articles: list[Article],
+    now: datetime,
+    categories: list[str],
+    webhook: str = "default",
+) -> str:
+    """カテゴリ指定モードのSlackメッセージ。
+
+    ヘッダーは日付のみ（「まとめ」等の固定タイトルなし）。
+    各カテゴリごとにセクション分割して表示する。
+    """
+    date_header = _format_date_header(now)
+
+    if not articles:
+        empty_line = _EMPTY_MESSAGES.get(webhook.lower()) if webhook else None
+        if not empty_line:
+            labels = " / ".join(CATEGORY_LABELS.get(c, c) for c in categories)
+            empty_line = f"本時間帯の「{labels}」に該当する新着はありませんでした。"
+        return f"{date_header}\n\n{empty_line}"
+
+    lines: list[str] = [date_header, ""]
+
+    # カテゴリごとにグルーピングして出力
+    seen_ids: set[int] = set()
+    for category in categories:
+        emoji = CATEGORY_EMOJIS.get(category, "📰")
+        label = CATEGORY_LABELS.get(category, category)
+        section_articles = [
+            a
+            for a in articles
+            if a.categories and category in a.categories and id(a) not in seen_ids
+        ]
+        if not section_articles:
+            continue
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"{emoji} *{label}* ({len(section_articles)}件)")
+        lines.append("")
+        _append_article_lines(lines, section_articles, highlight_categories=categories)
+        for a in section_articles:
+            seen_ids.add(id(a))
+        lines.append("")
+
+    # どのカテゴリにも属さなかった残り（実質発生しない想定だが保険）
+    leftover = [a for a in articles if id(a) not in seen_ids]
+    if leftover:
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"📰 *その他* ({len(leftover)}件)")
+        lines.append("")
+        _append_article_lines(lines, leftover, highlight_categories=categories)
+        lines.append("")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"📊 合計 *{len(articles)}件*")
+    return "\n".join(lines).rstrip()
+
+
+def _append_article_lines(
+    lines: list[str],
+    articles: list[Article],
+    highlight_categories: list[str],
+) -> None:
+    """記事一覧を lines に追記する（カテゴリメッセージ用の共通関数）。"""
+    for idx, article in enumerate(articles, start=1):
+        source = _get_source_name(article.link)
+        source_tag = f"_{source}_"
+
+        # 記事が該当する "ハイライト対象外" のカテゴリをバッジ併記
+        extra_badges = [
+            CATEGORY_BADGES[c]
+            for c in (article.categories or [])
+            if c not in highlight_categories and c in CATEGORY_BADGES
+        ]
+        badge_text = (" " + " ".join(extra_badges)) if extra_badges else ""
+
+        lines.append(f"*{idx}. <{article.link}|{article.title}>*{badge_text}")
+
+        # イベントは開催日時・場所を追記
+        if article.is_event and article.event_start_at:
+            event_info = article.event_start_at.strftime("%Y/%m/%d %H:%M")
+            if article.event_location:
+                event_info += f" / {article.event_location}"
+            lines.append(f"   📅 {event_info}")
+            lines.append(f"   {source_tag}")
+        else:
+            lines.append(f"   {source_tag}")
+            if article.summary:
+                lines.append(f"   {_truncate_summary(article.summary)}")
+
+        if idx < len(articles):
+            lines.append("")
+
+
+def _build_all_message(articles: list[Article], now: datetime) -> str:
+    """カテゴリ無指定（従来互換）のSlackメッセージ。ソース別に表示。"""
+    date_header = _format_date_header(now)
+    if not articles:
+        return f"{date_header}\n\n本時間帯の新着はありませんでした。"
+
+    lines = [date_header, ""]
+
     # ソース別にグループ化
     from collections import defaultdict
     articles_by_source = defaultdict(list)
     for article in articles:
         source = _get_source_name(article.link)
         articles_by_source[source].append(article)
-    
-    # 記事をソース別に表示（優先度順）
+
     idx = 1
-    # ソースの優先度順（PR TIMESが最優先、Google Newsが最下位）
     source_priority = {
         "PR TIMES": 1,
         "医療テックニュース": 2,
         "ヘルステックウォッチ": 3,
+        "connpass": 4,
+        "TECH PLAY": 4,
         "Google News": 5,
     }
-    
+
     for source in sorted(articles_by_source.keys(), key=lambda s: source_priority.get(s, 99)):
         if source not in source_priority:
-            # 未知のソースは出さない
             continue
         source_articles = articles_by_source[source]
         lines.append(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         lines.append(f"📰 *{source}* ({len(source_articles)}件)")
         lines.append("")
-        
+
         for article in source_articles:
-            # タイトルをハイパーリンク形式にする
             lines.append(f"*{idx}. <{article.link}|{article.title}>*")
-            
-            # 概要（description）があれば表示（最大150文字、文の途中で切らない）
             if article.summary:
-                summary = article.summary.strip()
-                if len(summary) > 150:
-                    # 150文字以内で文の終わり（句点、改行）を探す
-                    truncated = summary[:150]
-                    # 最後の句点、改行、または適切な区切り位置を探す
-                    for delimiter in ['。', '\n', '.', '！', '？']:
-                        last_pos = truncated.rfind(delimiter)
-                        if last_pos > 100:  # 100文字以上は確保
-                            truncated = truncated[:last_pos + 1]
-                            break
-                    summary = truncated + "..."
-                lines.append(f"   {summary}")
-            
+                lines.append(f"   {_truncate_summary(article.summary)}")
             idx += 1
-            if idx <= len(articles):  # 最後の記事以外は空行を追加
+            if idx <= len(articles):
                 lines.append("")
-    
+
     lines.append("")
     footer = f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📊 合計 *{len(articles)}件*の記事を配信"
     lines.append(footer)
-    
+
     return "\n".join(lines).rstrip()
 
 
@@ -318,6 +473,11 @@ def filter_by_time_range(articles: list[Article], now: datetime, hours_before: i
     skipped_old = 0
     
     for article in articles:
+        # 開催予定イベント（connpass等）は published ベースの時間範囲フィルタをバイパス
+        if article.is_event:
+            filtered.append(article)
+            continue
+
         if article.published_at is None:
             # 公開日時が不明な記事は除外（古い記事の可能性が高い）
             skipped_no_date += 1
@@ -373,62 +533,210 @@ def sort_articles(articles: list[Article]) -> list[Article]:
     return sorted(articles, key=sort_key)
 
 
-def run(dry_run: bool = False, storage_path: Path | None = None, max_items: int | None = None, manual: bool = False) -> int:
+def _resolve_webhook_url(webhook: str) -> str | None:
+    """--webhook 引数から実際の URL を解決する。"""
+    webhook = (webhook or "default").lower()
+    if webhook == "a":
+        return config.SLACK_WEBHOOK_URL_A or config.SLACK_WEBHOOK_URL
+    if webhook == "b":
+        return config.SLACK_WEBHOOK_URL_B or config.SLACK_WEBHOOK_URL
+    return config.SLACK_WEBHOOK_URL
+
+
+def _parse_categories(category_arg: str) -> list[str]:
+    """--category 引数を正規化する。all または空文字なら [] を返す（従来互換）。
+
+    エイリアス（`tech` → `healthtech`）も解決する。
+    """
+    if not category_arg or category_arg.lower() == "all":
+        return []
+    parts = [normalize_category(c.strip()) for c in category_arg.split(",") if c.strip()]
+    valid = [c for c in parts if c in ALL_CATEGORIES]
+    if not valid:
+        return []
+    # 順序は指定順を維持（重複は除去）
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for c in valid:
+        if c not in seen:
+            ordered.append(c)
+            seen.add(c)
+    return ordered
+
+
+def run(
+    dry_run: bool = False,
+    storage_path: Path | None = None,
+    max_items: int | None = None,
+    manual: bool = False,
+    category: str = "all",
+    webhook: str = "default",
+) -> int:
     storage_path = storage_path or config.SENT_URLS_PATH
-    # 手動実行時は5件に制限、それ以外は指定されたmax_itemsまたはデフォルト値
+    categories = _parse_categories(category)
+
+    # 手動実行時は5件に制限、それ以外は指定された max_items またはデフォルト値
     if manual:
         max_items = 5
-    else:
-        max_items = max_items or config.MAX_ARTICLES_PER_POST
+    elif max_items is None:
+        # カテゴリ指定時は MAX_ARTICLES_PER_CATEGORY、all は MAX_ARTICLES_PER_POST
+        max_items = (
+            config.MAX_ARTICLES_PER_CATEGORY
+            if categories
+            else config.MAX_ARTICLES_PER_POST
+        )
+
+    # webhook 指定からどちら系のソースを取得するかを決める
+    webhook_lower = (webhook or "default").lower()
+    want_healthtech_sources = webhook_lower in ("default", "a")
+    want_general_tech_sources = webhook_lower in ("default", "b")
+    logger.info(
+        "Source routing: webhook=%s -> healthtech=%s, general_tech/events=%s",
+        webhook_lower,
+        want_healthtech_sources,
+        want_general_tech_sources,
+    )
 
     fetched: list[Article] = []
-    
-    # RSSフィードから取得（オプション）
-    feed_urls = config.RSS_FEEDS
-    if feed_urls:
-        logger.info("Starting fetch for %d RSS feed(s)", len(feed_urls))
-        rss_articles = fetch_all_feeds(feed_urls, timeout=config.FETCH_TIMEOUT)
-        if not rss_articles:
-            logger.warning("RSSフィードから記事を取得できませんでした。")
-        else:
-            med_count, it_count, both_count = _count_keyword_hits(rss_articles)
-            logger.info("RSS keyword hits (before exclude): med=%d it=%d both=%d", med_count, it_count, both_count)
-            fetched.extend(rss_articles)
-    else:
-        logger.info("RSS_FEEDS が空のため、RSS取得をスキップします。")
 
-    # Webスクレイピングソース（優先）
-    if config.EXTRA_SOURCES:
-        logger.info("Fetching web scraping sources: %s", ", ".join(config.EXTRA_SOURCES))
-    extra_articles: list[Article] = []
-    for src in config.EXTRA_SOURCES:
-        try:
-            if src.lower() == "medicaltech":
-                articles = fetch_medicaltech(timeout=config.FETCH_TIMEOUT)
-                extra_articles.extend(articles)
-                logger.info("Fetched %d articles from medicaltech-news", len(articles))
-            elif src.lower() == "htwatch":
-                articles = fetch_htwatch(timeout=config.FETCH_TIMEOUT)
-                extra_articles.extend(articles)
-                logger.info("Fetched %d articles from ht-watch", len(articles))
-            elif src.lower() == "googlenews" or src.lower() == "google-news":
-                articles = fetch_google_news(timeout=config.FETCH_TIMEOUT)
-                extra_articles.extend(articles)
-                logger.info("Fetched %d articles from Google News", len(articles))
+    # -----------------------------------------------------------------------
+    # ヘルステック系ソース（Channel A / default 向け）: 医療×IT フィルタ対象
+    # -----------------------------------------------------------------------
+    if want_healthtech_sources:
+        feed_urls = config.RSS_FEEDS
+        if feed_urls:
+            logger.info("Starting fetch for %d RSS feed(s)", len(feed_urls))
+            rss_articles = fetch_all_feeds(feed_urls, timeout=config.FETCH_TIMEOUT)
+            if not rss_articles:
+                logger.warning("RSSフィードから記事を取得できませんでした。")
             else:
-                logger.warning("Unknown extra source: %s", src)
-        except Exception as exc:
-            logger.exception("Failed to fetch from %s: %s", src, exc)
-    
-    if extra_articles:
-        med_c, it_c, both_c = _count_keyword_hits(extra_articles)
-        logger.info("Web scraping keyword hits (before exclude): med=%d it=%d both=%d", med_c, it_c, both_c)
-        fetched.extend(extra_articles)
-    
+                med_count, it_count, both_count = _count_keyword_hits(rss_articles)
+                logger.info(
+                    "RSS keyword hits (before exclude): med=%d it=%d both=%d",
+                    med_count, it_count, both_count,
+                )
+                fetched.extend(rss_articles)
+        else:
+            logger.info("RSS_FEEDS が空のため、RSS取得をスキップします。")
+
+        # 医療×IT ソース（medicaltech / htwatch / googlenews）
+        healthtech_extra_keys = {"medicaltech", "htwatch", "googlenews", "google-news"}
+        healthtech_sources = [
+            s for s in config.EXTRA_SOURCES if s.lower() in healthtech_extra_keys
+        ]
+        if healthtech_sources:
+            logger.info("Fetching healthtech web sources: %s", ", ".join(healthtech_sources))
+        ht_articles: list[Article] = []
+        for src in healthtech_sources:
+            try:
+                if src.lower() == "medicaltech":
+                    articles = fetch_medicaltech(timeout=config.FETCH_TIMEOUT)
+                    ht_articles.extend(articles)
+                    logger.info("Fetched %d articles from medicaltech-news", len(articles))
+                elif src.lower() == "htwatch":
+                    articles = fetch_htwatch(timeout=config.FETCH_TIMEOUT)
+                    ht_articles.extend(articles)
+                    logger.info("Fetched %d articles from ht-watch", len(articles))
+                elif src.lower() in ("googlenews", "google-news"):
+                    articles = fetch_google_news(timeout=config.FETCH_TIMEOUT)
+                    ht_articles.extend(articles)
+                    logger.info("Fetched %d articles from Google News", len(articles))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to fetch from %s: %s", src, exc)
+        if ht_articles:
+            med_c, it_c, both_c = _count_keyword_hits(ht_articles)
+            logger.info(
+                "Healthtech scraping keyword hits (before exclude): med=%d it=%d both=%d",
+                med_c, it_c, both_c,
+            )
+            fetched.extend(ht_articles)
+
+        # Channel A 専用: 医療DX/ヘルステック資金調達 Google News 優先クエリ（ゲートバイパス）
+        try:
+            ht_priority = fetch_healthtech_priority_google_news(
+                config.HEALTHTECH_PRIORITY_GOOGLE_NEWS_QUERIES,
+                timeout=config.FETCH_TIMEOUT,
+            )
+            fetched.extend(ht_priority)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to fetch healthtech-priority Google News: %s", exc)
+
+    # -----------------------------------------------------------------------
+    # 一般IT 系ソース + connpass（Channel B / default 向け）: 医療×IT バイパス
+    # -----------------------------------------------------------------------
+    if want_general_tech_sources:
+        # PR TIMES（Channel B 一般ITの主ソース。キーワードは GENERAL_TECH_KEYWORDS で絞り込み）
+        if config.GENERAL_TECH_PRTIMES_RSS_URLS:
+            try:
+                gt_pr = fetch_general_tech_rss(
+                    config.GENERAL_TECH_PRTIMES_RSS_URLS,
+                    timeout=config.FETCH_TIMEOUT,
+                )
+                fetched.extend(gt_pr)
+                logger.info(
+                    "Fetched %d articles from general-tech PR TIMES (%d feed(s))",
+                    len(gt_pr),
+                    len(config.GENERAL_TECH_PRTIMES_RSS_URLS),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to fetch general-tech PR TIMES: %s", exc)
+
+        # Google News（.env で GENERAL_TECH_GOOGLE_NEWS_QUERIES を指定したときのみ）
+        if config.GENERAL_TECH_GOOGLE_NEWS_QUERIES:
+            try:
+                gt_gn = fetch_general_tech_google_news(
+                    config.GENERAL_TECH_GOOGLE_NEWS_QUERIES,
+                    timeout=config.FETCH_TIMEOUT,
+                )
+                fetched.extend(gt_gn)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to fetch general-tech Google News: %s", exc)
+
+        # 追加の一般IT RSS（Publickey 等。.env の GENERAL_TECH_RSS_URLS）
+        if config.GENERAL_TECH_RSS_URLS:
+            try:
+                gt_rss = fetch_general_tech_rss(
+                    config.GENERAL_TECH_RSS_URLS,
+                    timeout=config.FETCH_TIMEOUT,
+                )
+                fetched.extend(gt_rss)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to fetch general-tech RSS: %s", exc)
+
+        # connpass（イベント: オンライン/広島・7日以内）
+        if "connpass" in {s.lower() for s in config.EXTRA_SOURCES}:
+            try:
+                cn_articles = fetch_connpass(
+                    timeout=config.FETCH_TIMEOUT,
+                    allowed_locations=config.EVENT_LOCATIONS,
+                    lookahead_days=config.EVENT_LOOKAHEAD_DAYS,
+                )
+                fetched.extend(cn_articles)
+                logger.info("Fetched %d events from connpass (after filter)", len(cn_articles))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to fetch connpass: %s", exc)
+
     if not fetched:
         logger.warning("すべてのソースから記事を取得できませんでした。")
     else:
         logger.info("Total fetched articles: %d", len(fetched))
+
+    # Channel A のときは "医療DX らしさ" を必須化（矯正歯科/美容系や一般クリニックIT化ネタを排除）
+    medical_dx_required = webhook_lower == "a"
+    medical_dx_keywords_arg = (
+        config.MEDICAL_DX_KEYWORDS if medical_dx_required else None
+    )
+    # Channel A / default のときはヘルステック企業ホワイトリストを渡して、
+    # 該当企業名の記事は医療×IT / 医療DX ゲートをバイパス（漏れを減らす）
+    company_allowlist_arg = (
+        config.HEALTHTECH_COMPANY_ALLOWLIST if want_healthtech_sources else None
+    )
+    if medical_dx_required:
+        logger.info(
+            "Channel A: enabling medical-DX required gate (%d keywords) + company allowlist (%d companies)",
+            len(config.MEDICAL_DX_KEYWORDS),
+            len(config.HEALTHTECH_COMPANY_ALLOWLIST),
+        )
 
     filtered = filter_articles(
         fetched,
@@ -436,9 +744,36 @@ def run(dry_run: bool = False, storage_path: Path | None = None, max_items: int 
         it_keywords=config.IT_KEYWORDS,
         exclude_keywords=config.EXCLUDE_KEYWORDS,
         exclude_domains=config.EXCLUDE_DOMAINS,
+        general_tech_keywords=config.GENERAL_TECH_KEYWORDS,
+        medical_dx_keywords=medical_dx_keywords_arg,
+        company_allowlist=company_allowlist_arg,
     )
     logger.info("After keyword filtering: %d articles", len(filtered))
-    
+
+    # カテゴリ分類（all モードでも後続処理のためにタグ付けしておく）
+    filtered = categorize_articles(
+        filtered,
+        healthtech_keywords=config.HEALTHTECH_TECH_KEYWORDS,
+        competitor_keywords=config.COMPETITOR_ACTION_KEYWORDS,
+        conference_keywords=config.CONFERENCE_KEYWORDS,
+        general_tech_keywords=config.GENERAL_TECH_KEYWORDS,
+    )
+
+    # カテゴリ指定があれば該当カテゴリのいずれかに属する記事のみに絞る
+    if categories:
+        before = len(filtered)
+        filtered = [
+            a
+            for a in filtered
+            if a.categories and any(c in a.categories for c in categories)
+        ]
+        logger.info(
+            "Category filter (%s): %d articles (from %d)",
+            ",".join(categories),
+            len(filtered),
+            before,
+        )
+
     # 日時フィルタリング（指定時間範囲の記事のみを対象）
     now = datetime.now(timezone(timedelta(hours=9)))
     logger.info("Applying time window: last %d hour(s) (now: %s)", config.TIME_RANGE_HOURS, now.strftime("%Y-%m-%d %H:%M:%S JST"))
@@ -483,19 +818,31 @@ def run(dry_run: bool = False, storage_path: Path | None = None, max_items: int 
             new_articles = new_articles[:max_items]
 
     # nowは既に定義済み（日時フィルタリングで使用）
-    message = build_message(new_articles, now)
+    message = build_message(new_articles, now, categories=categories, webhook=webhook_lower)
 
     logger.info("New articles: %d (after dedupe and limit)", len(new_articles))
 
+    # 配信先 Webhook を解決
+    webhook_url = _resolve_webhook_url(webhook)
+    webhook_label = webhook.lower() if webhook else "default"
+
     if dry_run:
-        logger.info("Dry-run mode: message not sent to Slack.")
+        logger.info(
+            "Dry-run mode: message not sent to Slack (intended webhook: %s)",
+            webhook_label,
+        )
         print(message)
         return 0
 
-    success = post_message(config.SLACK_WEBHOOK_URL, message, timeout=config.FETCH_TIMEOUT)
-    if not success:
-        logger.error("Slack 送信に失敗しました。")
+    if not webhook_url:
+        logger.error("Slack Webhook URL が未設定です (webhook=%s)", webhook_label)
         return 1
+
+    success = post_message(webhook_url, message, timeout=config.FETCH_TIMEOUT)
+    if not success:
+        logger.error("Slack 送信に失敗しました (webhook=%s)。", webhook_label)
+        return 1
+    logger.info("Posted to Slack (webhook=%s)", webhook_label)
 
     # 送信済みURLを保存（手動実行時も保存して、定時実行時に重複を防ぐ）
     if new_articles:
@@ -543,6 +890,29 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="手動実行モード（送信済みURLチェックをスキップし、5件に制限）",
     )
+    parser.add_argument(
+        "--category",
+        default="all",
+        help=(
+            "配信カテゴリ（カンマ区切り複数指定可）: "
+            "healthtech=ヘルステック技術動向, general_tech=一般IT技術動向, "
+            "competitor=競合動向, conference=カンファレンス/イベント, "
+            "all=全件ソース別まとめ "
+            "(tech は healthtech のエイリアス) "
+            "(例: --category competitor,healthtech,conference) (default: all)"
+        ),
+    )
+    parser.add_argument(
+        "--webhook",
+        choices=["default", "a", "b"],
+        default="default",
+        help=(
+            "配信先 Slack Webhook を選択: "
+            "a=SLACK_WEBHOOK_URL_A（ヘルステック＝競合/ヘルステック技術動向/ヘルステックカンファレンス, 朝）, "
+            "b=SLACK_WEBHOOK_URL_B（一般IT技術動向+カンファレンス/イベント, 夜）, "
+            "default=SLACK_WEBHOOK_URL (default: default)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -567,5 +937,7 @@ if __name__ == "__main__":
         storage_path=args.storage_path,
         max_items=args.max_items,
         manual=args.manual,
+        category=args.category,
+        webhook=args.webhook,
     )
     raise SystemExit(exit_code)

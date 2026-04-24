@@ -8,7 +8,7 @@
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>cd /Users/suisan_2003/slack-news- &amp;&amp; EXTRA_SOURCES=medicaltech,htwatch,googlenews LOG_FILE=/Users/suisan_2003/slack-news-/cron.log /usr/bin/python3 main.py --verbose &gt;&gt; /Users/suisan_2003/slack-news-/cron.log 2&gt;&amp;1</string>
+        <string>cd /Users/suisan_2003/slack-news- &amp;&amp; EXTRA_SOURCES=medicaltech,htwatch,connpass LOG_FILE=/Users/suisan_2003/slack-news-/cron.log /usr/bin/python3 main.py --verbose --category general_tech,conference --webhook b &gt;&gt; /Users/suisan_2003/slack-news-/cron.log 2&gt;&amp;1</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -23,4 +23,3 @@
     <string>/Users/suisan_2003/slack-news-/cron.log</string>
 </dict>
 </plist>
-
