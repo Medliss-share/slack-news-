@@ -125,6 +125,9 @@ MEDICAL_KEYWORDS: list[str] = [
     "訪問看護",
     "在宅医療",
     "在宅看護",
+    # 国・自治体の医療政策（Google News 優先クエリ等でタイトルに省名のみの場合の医療側マッチ用）
+    "厚生労働省",
+    "厚労省",
 ]
 
 IT_KEYWORDS: list[str] = [
@@ -488,6 +491,25 @@ HEALTHTECH_TECH_KEYWORDS.extend(_load_extra_keywords("HEALTHTECH_TECH_EXTRA_KEYW
 GENERAL_TECH_KEYWORDS.extend(_load_extra_keywords("GENERAL_TECH_EXTRA_KEYWORDS"))
 MEDICAL_DX_KEYWORDS.extend(_load_extra_keywords("MEDICAL_DX_EXTRA_KEYWORDS"))
 
+# 国・自治体の医療DX関連（通知・政策・周産期/産科とDXの交差など）。
+# MEDICAL_DX 第3ゲートとヘルステック技術動向タグの双方に効かせる。
+_GOVERNMENT_MEDICAL_DX_KEYWORDS: tuple[str, ...] = (
+    "厚生労働省",
+    "厚労省",
+    "デジタル庁",
+    "自治体",
+    "都道府県",
+    "市区町村",
+    "地方自治体",
+    "周産期医療",
+    "産科医療",
+)
+for _kw in _GOVERNMENT_MEDICAL_DX_KEYWORDS:
+    if _kw not in HEALTHTECH_TECH_KEYWORDS:
+        HEALTHTECH_TECH_KEYWORDS.append(_kw)
+    if _kw not in MEDICAL_DX_KEYWORDS:
+        MEDICAL_DX_KEYWORDS.append(_kw)
+
 # =============================================================================
 # ヘルステック企業ホワイトリスト（Channel A 向け: 企業名含む記事は全ゲートをバイパス）
 # =============================================================================
@@ -564,6 +586,12 @@ DEFAULT_HEALTHTECH_PRIORITY_GOOGLE_NEWS_QUERIES: list[str] = [
     "医療DX 提携",
     "医療DX 上場",
     "ヘルステック M&A",
+    # 国・自治体の医療DXお知らせ・政策
+    "厚生労働省 医療DX",
+    "厚生労働省 電子カルテ",
+    "自治体 医療DX",
+    "デジタル庁 医療情報",
+    "厚生労働省 オンライン資格確認",
 ]
 _env_healthtech_priority_queries = [
     q.strip()

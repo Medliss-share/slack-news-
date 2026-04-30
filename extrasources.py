@@ -318,7 +318,8 @@ def fetch_healthtech_priority_google_news(
     timeout: int = 10,
     recency_days: int = 3,
 ) -> List[Article]:
-    """Channel A 用に、ヘルステック/医療DX の資金調達・提携系 Google News を複数クエリ取得する。
+    """Channel A 用に、ヘルステック/医療DX の資金調達・提携・国・自治体の政策/お知らせ系
+    Google News を複数クエリ取得する。
 
     取得記事には `is_healthtech_priority=True` を付与し、filter 側で
     医療×IT / 医療DX ゲートをバイパスさせる（= 漏らさず Channel A に流す）。
