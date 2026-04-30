@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Iterable, List
 
-from fetcher import Article
+from slack_news.domain.article import Article
 
 logger = logging.getLogger(__name__)
 

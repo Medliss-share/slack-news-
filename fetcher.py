@@ -4,30 +4,17 @@ import logging
 import re
 import urllib.request
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable, List
 
 from httpclient import urlopen as _urlopen
+from slack_news.domain.article import Article
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class Article:
-    title: str
-    link: str
-    published: str | None = None
-    summary: str | None = None
-    published_at: datetime | None = None
-    matched_keywords: list[str] | None = None  # マッチしたキーワードのリスト
-    categories: list[str] | None = None  # 分類されたカテゴリ（tech/competitor/conference）
-    is_event: bool = False  # connpass 等の開催予定イベント（医療×ITフィルタと time_range をバイパス）
-    event_start_at: datetime | None = None  # 開催日時（イベントの場合）
-    event_location: str | None = None  # 開催場所文字列（表示用）
-    is_general_tech: bool = False  # 一般IT ソース由来の記事（医療×IT フィルタをバイパス）
-    is_healthtech_priority: bool = False  # ヘルステック優先ソース由来（Channel A の医療DXゲートをバイパス）
+# 後方互換: `from fetcher import Article`
+__all__ = ["Article", "fetch_all_feeds", "fetch_feed", "parse_datetime"]
 
 
 def _fetch_description_from_page(link: str, timeout: int) -> str | None:

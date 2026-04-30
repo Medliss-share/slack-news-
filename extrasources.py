@@ -8,7 +8,8 @@ import urllib.request
 from typing import List
 from urllib.parse import urljoin
 
-from fetcher import Article, parse_datetime
+from fetcher import fetch_feed, parse_datetime
+from slack_news.domain.article import Article
 from httpclient import urlopen as _urlopen
 
 GOOGLE_NEWS_RECENCY_DAYS = 3  # Google Newsの検索対象期間（日数）
@@ -182,7 +183,6 @@ def fetch_connpass(
     医療×IT 一次フィルタおよび published_at ベースの時間範囲フィルタはバイパスされる。
     """
     from datetime import datetime, timezone, timedelta
-    from fetcher import fetch_feed
 
     url = "https://connpass.com/explore/ja.atom"
     allowed_locations = allowed_locations or []
@@ -243,9 +243,7 @@ def fetch_connpass(
 
 def fetch_google_news(timeout: int = 10) -> List[Article]:
     """Googleニュースから医療×IT関連の記事を取得する（RSSフィードを使用）。"""
-    # GoogleニュースのRSSフィードを使用（医療×ITで検索）
     import urllib.parse
-    from fetcher import fetch_feed
 
     query = f"医療 IT when:{GOOGLE_NEWS_RECENCY_DAYS}d"
     rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ja&gl=JP&ceid=JP:ja&scoring=n"
@@ -273,7 +271,6 @@ def fetch_general_tech_google_news(
     バイパスさせる。
     """
     import urllib.parse
-    from fetcher import fetch_feed
 
     all_articles: list[Article] = []
     seen_links: set[str] = set()
@@ -325,7 +322,6 @@ def fetch_healthtech_priority_google_news(
     医療×IT / 医療DX ゲートをバイパスさせる（= 漏らさず Channel A に流す）。
     """
     import urllib.parse
-    from fetcher import fetch_feed
 
     all_articles: list[Article] = []
     seen_links: set[str] = set()
@@ -376,7 +372,6 @@ def fetch_general_tech_rss(
     Publickey / ITmedia AI+ / ZDNet Japan 等の一般IT ニュースフィードを想定。
     取得した記事には `is_general_tech=True` を付与する。
     """
-    from fetcher import fetch_feed
 
     all_articles: list[Article] = []
     seen_links: set[str] = set()

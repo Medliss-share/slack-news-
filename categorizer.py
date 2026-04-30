@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable
 
-from fetcher import Article
+from slack_news.domain.article import Article
 
 logger = logging.getLogger(__name__)
 
