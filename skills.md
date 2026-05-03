@@ -25,6 +25,18 @@
 
 - `main.py` は **CLI とロギング設定のみ**。ユースケースの組み立て（アダプタの注入）にとどめる。
 
+## 記事フィルタの段階（`filter.py`）
+
+方針は **拾い上げ（包含）を主**にし、拒否は **任意の安全弁**に限定する。
+
+| 段階 | 内容 |
+|------|------|
+| Stage 0 | `exclude_domains` で URL ドメイン除外 |
+| Stage 1 | **イベント以外**に、`EXCLUDE_KEYWORDS` を照合（デフォルトは空。運用では `EXCLUDE_EXTRA_KEYWORDS` のみ）。タイトル＋概要、URL 除去後 |
+| Stage 2 | ソース別の**包含**: connpass イベント、優先 Google（Channel A 時は **医療 AND (IT OR 医療DX) OR 企業WL**、それ以外は **医療 OR 企業WL**）、企業WL、一般ITキーワード、通常の医療×IT（＋Channel A 時は医療DX ゲート） |
+
+カテゴリタグ付け（競合・イベント等）は `filter_articles` の**後**の `categorizer` で行う。
+
 ## 変更時のチェックリスト
 
 - 新しい外部サービスを足すときは **Port を先に**定義し、Infrastructure で実装する。

@@ -244,6 +244,7 @@ class NewsDeliveryUseCase:
                 len(config.HEALTHTECH_COMPANY_ALLOWLIST),
             )
 
+        # 段階的フィルタは filter 内で完結。EXCLUDE_KEYWORDS はデフォルト空（必要なら EXCLUDE_EXTRA_KEYWORDS）。
         filtered = filter_articles(
             fetched,
             medical_keywords=config.MEDICAL_KEYWORDS,
